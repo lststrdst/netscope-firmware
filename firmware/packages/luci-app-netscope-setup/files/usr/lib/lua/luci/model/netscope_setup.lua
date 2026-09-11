@@ -312,12 +312,14 @@ function M.voice_update()
     value.note='Два независимых источника совпали; IPv4-сети Telegram сохранены приватно и ещё не направлены в голосовой VPN-канал.';return value
 end
 function M.voice_activate()
+    fs.unlink('/tmp/netscope-voice-boot/user-paused')
     local route=need(M.tools().voice_route,'Диспетчер voice routing не установлен')
     local ok,out=P.exec({route,'start'},35);need(ok,'Маршрутизация звонков не включена: '..tostring(out):sub(1,240))
     local value=json.parse(out);need(type(value)=='table' and value.active and value.healthy and value.hy2,'Маршрутизация звонков не достигла исправного состояния')
     value.note=value.fallback_ready and 'Telegram relay и Discord voice UDP направляются через HY2; Mieru прогрет как автоматический резерв. Другой UDP, Steam/Dota, L2TP и системный default route не изменены.' or 'Telegram relay и Discord voice UDP направляются через HY2. Резерв Mieru не готов; при сбое правило будет снято fail-open.';return value
 end
 function M.voice_deactivate()
+    C.mkdir('/tmp/netscope-voice-boot');local paused=io.open('/tmp/netscope-voice-boot/user-paused','w');if paused then paused:write('1\n');paused:close()end
     local route=need(M.tools().voice_route,'Диспетчер voice routing не установлен')
     local ok,out=P.exec({route,'stop'},12);need(ok,'Не удалось снять voice routing: '..tostring(out):sub(1,240))
     local value=json.parse(out);need(type(value)=='table' and not value.active,'Маршрутизация звонков вернула некорректное состояние после остановки')
@@ -400,6 +402,11 @@ function M.preflight(id)
 end
 function M.delete(id)
     local value,dir=draft(id);local active=runtime_status(M.tools().manager,value.kind);need(active.id~=id or not (active.active or active.pending),'Остановите профиль перед удалением его приватных файлов')
+    if value.kind=='hy2' then
+        for _,node in ipairs(require('luci.model.netscope_channels').pool().nodes) do
+            need(node.id~=id,'Профиль входит в группу HY2-каналов. Удаление резерва из списка черновиков заблокировано.')
+        end
+    end
     local seen={};for name in fs.dir(dir) do
         need(allowed_files[name] and not seen[name],'Черновик содержит неожиданный файл; автоматическое удаление отменено')
         local st=fs.lstat(dir..'/'..name);need(st and st.type=='reg','Черновик содержит файл неподдерживаемого типа; автоматическое удаление отменено');seen[name]=true
@@ -428,6 +435,10 @@ end
 function M.deactivate(id)
     need(C.valid_id(id),'Некорректный черновик');local value=draft(id);local manager=need(M.tools().manager,'Транзакционный диспетчер не установлен');local state=runtime_status(manager,value.kind)
     need(state.id==id and (state.active or state.pending),'Выбранный профиль не активен')
+    if value.kind=='hy2' then
+        local configured=C.read(C.ROOT..'/config/voice/autostart.conf',512) or ''
+        if configured:find('profile='..id,1,true) then M.voice_deactivate() end
+    end
     local ok,out=P.exec({manager,'stop',value.kind,id},12);need(ok,'Не удалось очистить профиль; перед повтором проверьте только собственные объекты NETSCOPE')
     local final=json.parse(out);need(type(final)=='table' and final.kind==value.kind and not final.active and not final.pending and not final.healthy,'Очистка профиля вернула некорректное состояние')
     return {id=id,active=false,kind=value.kind,note='Сначала удалены собственные правила NETSCOPE, затем отдельный интерфейс или процесс. Другие VPN и маршруты не затронуты.'}

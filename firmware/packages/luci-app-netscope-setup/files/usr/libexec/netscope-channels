@@ -1,0 +1,105 @@
+#!/usr/bin/lua
+-- One short-lived probe client at a time; no inherited shell or arbitrary commands.
+local C=require'luci.model.netscope_setup_runtime'
+local M=require'luci.model.netscope_channels'
+local P=require'luci.model.netscope_channel_policy'
+local fs,n,j=require'nixio.fs',require'nixio',require'luci.jsonc'
+C.mkdir(M.RUN)
+-- POSIX process lock: released on controller exit and not inherited by forked VPNs.
+-- Do not unlink this file; all contenders must lock the same inode.
+local guard=assert(n.open(M.RUN..'/controller.lock','w+','600'))
+assert(guard:lock('tlock'),'Another NETSCOPE channel controller is running')
+local function sleep(sec)n.nanosleep(sec,0)end
+local function udp(port)
+    local ok,out=C.exec({'/usr/bin/env','NETSCOPE_SOCKS_PORT='..port,'/usr/libexec/netscope-hy2-udp-probe'},10)
+    local v=ok and j.parse(out)
+    return type(v)=='table' and v.udp==true and tonumber(v.latency_ms)~=nil,type(v)=='table' and tonumber(v.latency_ms) or nil
+end
+local function probe(id)
+    local binary=fs.access('/usr/bin/hysteria','x') and '/usr/bin/hysteria' or '/mnt/sda1/qwrt-services/hysteria/bin/hysteria'
+    if not fs.access(binary,'x')then return false end
+    local ok,path=pcall(M.probe_config,id);if not ok then return false end
+    -- Refuse a occupied port: never measure another service as this candidate.
+    local sock=n.socket('inet','stream');if not sock or not sock:bind('127.0.0.1',2289)then if sock then sock:close()end;return false end;sock:close()
+    local pid=n.fork();if not pid then return false end
+    if pid==0 then
+        local null=n.open('/dev/null','w+');n.dup(null,n.stdin);n.dup(null,n.stdout);n.dup(null,n.stderr)
+        n.exec(binary,'client','-c',path);os.exit(127)
+    end
+    -- Independent lifetime cap also works if this controller is killed mid-probe.
+    local reaper=n.fork()
+    if reaper==0 then
+        sleep(14)
+        local cmd=C.read('/proc/'..pid..'/cmdline',4096) or ''
+        if cmd:find(path,1,true) and cmd:find('hysteria',1,true)then n.kill(pid,9)end
+        os.exit(0)
+    end
+    local result,latency=false,nil
+    local success=pcall(function()
+        sleep(1)
+        result,latency=udp(2289)
+    end)
+    n.kill(pid,15);sleep(1);local got=n.waitpid(pid,'nohang');if not got or got==0 then n.kill(pid,9);n.waitpid(pid)end
+    if reaper and reaper>0 then n.kill(reaper,15);n.waitpid(reaper) end
+    fs.unlink(path);return success and result,latency
+end
+if arg[1]=='probe' then
+    C.mkdir(M.RUN);local ok,ms=probe(arg[2]);print(j.stringify({ok=ok,ms=ms}));os.exit(ok and 0 or 1)
+end
+assert(arg[1]=='daemon','Expected daemon or probe')
+C.mkdir(M.RUN)
+local s=M.read(M.RUN..'/status.json',{metrics={},events={}});s.metrics=s.metrics or {};s.events=s.events or {}
+-- The boot reconciler owns any interrupted switch journal. Never retain a stuck UI lock.
+if s.result=='switching' then s.result='controller_restarted' end
+fs.unlink(M.RUN..'/processing.json');s.checking=nil
+local function save()s.at=os.time();C.atomic(M.RUN..'/status.json',s)end
+local function event(id,reason,ok)
+    s.events[#s.events+1]={at=os.time(),id=id,reason=reason,ok=ok};while #s.events>30 do table.remove(s.events,1)end
+end
+local function switch(id,reason)
+    s.result='switching';save()
+    local ok=C.exec({'/usr/libexec/netscope-voice-boot','switch',id},90)
+    local live=M.live() or {};ok=ok and live.active and live.id==id
+    s.result=ok and 'switched' or 'switch_failed_rolled_back';event(id,reason,ok)
+    if ok then s.last_switch=os.time()
+    else s.metrics[id]=P.sample(s.metrics[id],false,nil,os.time()) end
+    save();return ok
+end
+while true do
+    assert(guard:stat(),'Controller lock descriptor closed')
+    if C.storage().mounted then
+        local pool=M.pool();local live=M.live() or {};local request=M.read(M.RUN..'/request.json',nil)
+        local keep={};for _,node in ipairs(pool.nodes)do keep[node.id]=true end
+        for id in pairs(s.metrics)do if not keep[id] then s.metrics[id]=nil end end
+        if request then
+            C.atomic(M.RUN..'/processing.json',{at=os.time()})
+            fs.unlink(M.RUN..'/request.json')
+            s.result=nil
+            if os.time()-(tonumber(request.at) or 0)<180 then
+                if request.mode=='auto' or request.mode=='manual' then C.mkdir(M.ROOT);C.atomic(M.ROOT..'/settings.json',{mode=request.mode}) end
+                if request.mode=='manual' and request.id and request.id~='' then
+                    local found=false;for _,v in ipairs(pool.nodes)do if v.id==request.id then found=true end end
+                    if found and M.enabled() then
+                        local ok,ms=probe(request.id);s.metrics[request.id]=P.sample(s.metrics[request.id],ok,ms,os.time())
+                        if ok then switch(request.id,'manual')else s.result='selected_node_unavailable';event(request.id,'manual_probe_failed',false)end
+                    else s.result='enable_voice_autostart_first' end
+                end
+            else s.result='request_expired' end
+        end
+        for _,node in ipairs(pool.nodes)do
+            s.checking=node.id;save();local ok,ms
+            live=M.live() or {}
+            -- A dead active process must count as failure, not as a healthy fresh clone.
+            local current=(live.id and live.id~='') and live.id or M.selected()
+            if current==node.id then ok,ms=udp(2083)else ok,ms=probe(node.id)end
+            s.metrics[node.id]=P.sample(s.metrics[node.id],ok,ms,os.time());s.checking=nil;save()
+        end
+        live=M.live() or {}
+        local current=(live.id and live.id~='') and live.id or M.selected()
+        local selected,reason=P.choose(pool.nodes,s.metrics,current,M.settings().mode,s.last_switch,os.time())
+        if selected and M.enabled() then switch(selected,reason)end
+        fs.unlink(M.RUN..'/processing.json')
+        save()
+    end
+    for _=1,20 do if fs.access(M.RUN..'/request.json')then break end;sleep(1)end
+end

@@ -7,6 +7,14 @@ RUN=${NETSCOPE_VOICE_BOOT_RUN:-/tmp/netscope-voice-boot}
 CONF=$ROOT/config/voice/autostart.conf
 MANAGER=${NETSCOPE_VPN_MANAGER:-/usr/libexec/netscope-vpn-profile}
 ROUTE=${NETSCOPE_VOICE_ROUTE:-/usr/libexec/netscope-voice-route}
+UDP_PROBE=${NETSCOPE_VOICE_UDP_PROBE:-/usr/libexec/netscope-hy2-udp-probe}
+LOCK=${NETSCOPE_VOICE_LOCK:-/var/lock/netscope-voice-lifecycle.lock}
+# flock releases on crashes; no stale mkdir locks and no descriptors inherited by VPN children.
+case "${1:-}" in
+  switch|reconcile|cleanup|configure|unconfigure)
+    exec /usr/bin/flock -w 5 -o "$LOCK" "$0" locked "$@";;
+  locked) shift;;
+esac
 
 valid_id(){ printf '%s\n' "$1" | grep -Eq '^[0-9]{8}T[0-9]{6}-[0-9a-fA-F]{10}$'; }
 profile(){ sed -n 's/^profile=//p' "$CONF" 2>/dev/null | head -n1; }
@@ -44,12 +52,19 @@ ensure_profile(){
   fi
   if is_true "$state" active && is_true "$state" healthy; then return 0; fi
   if [ -f "$marker" ] && [ "$live" = "$id" ]; then "$MANAGER" stop "$kind" "$id" >/dev/null 2>&1 || true; fi
-  started=$($MANAGER start "$kind" "$id" 2>/dev/null) || return 1
+  started=$($MANAGER start "$kind" "$id" 2>&1) || {
+    # Only the manager's own fixed diagnostic is logged, never runtime/config output.
+    reason=$(printf '%s\n' "$started" | sed -n 's/^netscope-vpn-profile: //p' | head -n1)
+    logger -t netscope-voice "profile start failed: ${reason:-manager unavailable}"
+    return 1
+  }
   is_true "$started" healthy || { "$MANAGER" rollback "$kind" "$id" >/dev/null 2>&1 || true;return 1; }
   "$MANAGER" confirm "$kind" "$id" >/dev/null 2>&1 || { "$MANAGER" rollback "$kind" "$id" >/dev/null 2>&1 || true;return 1; }
   printf '%s\n' "$id" >"$marker"
 }
 reconcile(){
+  recover_switch
+  [ ! -f "$RUN/user-paused" ] || return 0
   enabled || return 1;id=$(profile);valid_id "$id" || return 1
   ensure_profile hy2 "$id" 1 || { "$ROUTE" stop >/dev/null 2>&1 || true;return 1; }
   reserve=$(mieru_profile)
@@ -58,10 +73,47 @@ reconcile(){
   "$ROUTE" stop >/dev/null 2>&1 || true
   "$ROUTE" start >/dev/null 2>&1
 }
-daemon(){
-  mkdir -p "$RUN";chmod 700 "$RUN";trap 'cleanup;exit 0' INT TERM
-  sleep 8
-  while enabled;do if reconcile;then sleep 15;else "$ROUTE" stop >/dev/null 2>&1 || true;sleep 60;fi;done
-  cleanup
+recover_switch(){
+  journal="$ROOT/config/voice/channel-switch.previous"
+  [ -f "$journal" ] || return 0
+  old=$(sed -n 's/^profile=//p' "$journal" | head -n1);valid_id "$old" || return 1
+  current=$(active_id hy2)
+  expected=$(sed -n 's/^#target=//p' "$journal" | tail -n1)
+  [ -z "$current" ] || [ "$current" = "$old" ] || [ "$current" = "$expected" ] || return 1
+  "$ROUTE" stop >/dev/null 2>&1 || true
+  [ -z "$current" ] || [ "$current" = "$old" ] || "$MANAGER" stop hy2 "$current" >/dev/null 2>&1 || true
+  cp "$journal" "$CONF.new";chmod 600 "$CONF.new";mv "$CONF.new" "$CONF"
+  ensure_profile hy2 "$old" 1 || return 1
+  rm -f "$journal"
 }
-case "${1:-}" in configure) configure "$@";; unconfigure) rm -f "$CONF";; daemon) daemon;; cleanup) mkdir -p "$RUN";cleanup;; *) echo 'usage: netscope-voice-boot {configure HY2_ID [MIERU_ID]|unconfigure|daemon|cleanup}' >&2;exit 2;;esac
+switch_profile(){
+  target=${2:-};valid_id "$target" || return 2
+  enabled || { echo 'voice autostart is disabled' >&2;return 2; }
+  [ ! -f "$RUN/user-paused" ] || return 2
+  [ -f "$ROOT/config/setup/$target/hysteria.yaml" ] && [ ! -L "$ROOT/config/setup/$target/hysteria.yaml" ] || return 2
+  mkdir -p "$RUN";recover_switch || return 1
+  old=$(profile);valid_id "$old" || return 2
+  [ "$old" != "$target" ] || { reconcile;return; }
+  current=$(active_id hy2)
+  [ -z "$current" ] || [ "$current" = "$old" ] || return 2
+  journal="$ROOT/config/voice/channel-switch.previous"
+  cp "$CONF" "$journal";printf '#target=%s\n' "$target" >>"$journal";chmod 600 "$journal";sync
+  "$ROUTE" stop >/dev/null 2>&1 || true
+  "$MANAGER" stop hy2 "$old" >/dev/null 2>&1 || true
+  # Boot recovery always has the previous selection until new UDP + route validation succeeds.
+  if ensure_profile hy2 "$target" 1 && "$UDP_PROBE" >/dev/null 2>&1 && "$ROUTE" start >/dev/null 2>&1;then
+    configure configure "$target" "$(mieru_profile)"
+    rm -f "$journal";return 0
+  fi
+  "$MANAGER" stop hy2 "$target" >/dev/null 2>&1 || true
+  recover_switch || true
+  "$ROUTE" start >/dev/null 2>&1 || true
+  return 1
+}
+daemon(){
+  mkdir -p "$RUN";chmod 700 "$RUN";trap '"$0" cleanup;exit 0' INT TERM
+  sleep 8
+  while enabled;do if "$0" reconcile;then sleep 15;else sleep 60;fi;done
+  "$0" cleanup
+}
+case "${1:-}" in configure) configure "$@";; unconfigure) rm -f "$CONF";; switch) switch_profile "$@";; reconcile) reconcile;; daemon) daemon;; cleanup) mkdir -p "$RUN";cleanup;; *) echo 'usage: netscope-voice-boot {configure HY2_ID [MIERU_ID]|unconfigure|daemon|cleanup|switch HY2_ID|reconcile}' >&2;exit 2;;esac

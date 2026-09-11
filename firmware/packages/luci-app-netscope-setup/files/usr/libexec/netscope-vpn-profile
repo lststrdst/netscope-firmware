@@ -110,6 +110,7 @@ begin_pending(){
     mkdir -p "$STATE_DIR";chmod 700 "$STATE_DIR"
     [ ! -e "$STATE_DIR/active" ] && [ ! -e "$STATE_DIR/pending" ] || die 'this NETSCOPE protocol already has an active or pending profile'
     printf '%s\n' "$id" >"$STATE_DIR/pending"
+    START_OWNED=1
     self=$0
     ( sleep "$GUARD_SECONDS";[ ! -f "$STATE_DIR/pending" ] || "$self" rollback "$KIND" "$id" ) </dev/null >/dev/null 2>&1 &
     echo $! >"$STATE_DIR/guard.pid"
@@ -176,9 +177,15 @@ start)
     if valid_kind "${1:-}";then kind=$1;shift;else kind=wg;fi
     id=${1:-};shift || true;valid_id "$id" || die 'invalid draft id'
     [ "$GUARD_SECONDS" -ge 2 ] && [ "$GUARD_SECONDS" -le 120 ] || die 'invalid rollback timeout'
-    set_kind "$kind";lock;trap 'cleanup;unlock' EXIT HUP INT TERM
+    set_kind "$kind";lock;START_OWNED=0;trap '[ "$START_OWNED" = 0 ] || cleanup;unlock' EXIT HUP INT TERM
     if [ -n "$IFACE" ];then [ "$#" -ge 3 ] || die 'missing tunnel parameters';start_wire "$id" "$@";else [ "$#" -eq 0 ] || die 'unexpected proxy parameters';start_proxy "$id";fi
-    healthy || die 'health check failed; rolled back'
+    if ! healthy; then
+        alive=no; listening=no; tunnel=no
+        pid_alive && alive=yes
+        listener_up "$LOCAL_PORT" && listening=yes
+        [ -z "$TUN_IFACE" ] || "$IP" link show dev "$TUN_IFACE" >/dev/null 2>&1 && tunnel=yes
+        die "health check failed (process=$alive listener=$listening tunnel=$tunnel); rolled back"
+    fi
     trap - EXIT HUP INT TERM;unlock;status
     ;;
 confirm)

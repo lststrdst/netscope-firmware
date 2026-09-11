@@ -52,6 +52,7 @@ upstream_ok(){
 mieru_ok(){
     [ -x "$MIERU_TUN" ] || return 1
     configured=$(sed -n 's/^mieru_profile=//p' "$ROOT/config/voice/autostart.conf" 2>/dev/null | head -n1)
+    [ -n "$configured" ] || return 1
     if [ -n "$configured" ]; then
       printf '%s\n' "$configured" | grep -Eq '^[0-9]{8}T[0-9]{6}-[0-9a-fA-F]{10}$' || return 1
       state=$($MANAGER status mieru 2>/dev/null) || return 1
@@ -196,7 +197,7 @@ start)
     create_sets; load_telegram
     upstream_ok || die 'HY2 upstream probe through SOCKS5 failed; routing was not changed'
     date -u +%Y-%m-%dT%H:%M:%SZ >"$RUN/upstream-ok"
-    if [ -x "$MIERU_TUN" ] && "$MIERU_TUN" start >/dev/null 2>&1; then
+    if [ -n "$(sed -n 's/^mieru_profile=//p' "$ROOT/config/voice/autostart.conf" 2>/dev/null)" ] && [ -x "$MIERU_TUN" ] && "$MIERU_TUN" start >/dev/null 2>&1; then
       mieru_ok || "$MIERU_TUN" stop >/dev/null 2>&1 || true
     fi
     write_dns; attach "$TUN_IFACE"; route_ok "$TUN_IFACE" || die 'voice route health check failed'
@@ -220,7 +221,7 @@ guard)
           failures=$((failures+1)); rm -f "$RUN/upstream-ok"
         fi
         if [ "$failures" -ge 2 ]; then
-          if [ -x "$MIERU_TUN" ] && "$MIERU_TUN" start >/dev/null 2>&1 && mieru_ok && mieru_upstream_ok; then
+          if [ -n "$(sed -n 's/^mieru_profile=//p' "$ROOT/config/voice/autostart.conf" 2>/dev/null)" ] && [ -x "$MIERU_TUN" ] && "$MIERU_TUN" start >/dev/null 2>&1 && mieru_ok && mieru_upstream_ok; then
             attach nsmieru; failures=0; recoveries=0; date -u +%Y-%m-%dT%H:%M:%SZ >"$RUN/upstream-ok"
             logger -t netscope-voice 'HY2 failed; voice route moved to warm Mieru fallback'
           else

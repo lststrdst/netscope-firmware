@@ -20,6 +20,9 @@ function index()
     entry({'admin','services','netscope_setup','voice_telemetry'},call('voice_telemetry')).leaf=true
     entry({'admin','services','netscope_setup','voice_autostart'},post('voice_autostart')).leaf=true
     entry({'admin','services','netscope_setup','l2tp_status'},call('l2tp_status')).leaf=true
+    entry({'admin','services','netscope_setup','pool_status'},call('channels')).leaf=true
+    entry({'admin','services','netscope_setup','channel_select'},post('channel_select')).leaf=true
+    entry({'admin','services','netscope_setup','channel_import'},post('channel_import')).leaf=true
 end
 local function headers()
     local h=require'luci.http';h.header('Cache-Control','no-store');h.header('X-Content-Type-Options','nosniff');h.header('Referrer-Policy','no-referrer');h.header('X-Frame-Options','SAMEORIGIN');return h
@@ -57,6 +60,9 @@ function voice_deactivate()locked(function()return require('luci.model.netscope_
 function voice_telemetry()local h=headers();h.prepare_content('application/json');h.write_json(require('luci.model.netscope_setup').voice_telemetry())end
 function voice_autostart()locked(function(h)return require('luci.model.netscope_setup').voice_autostart(h.formvalue('enabled')=='1')end)end
 function l2tp_status()local h=headers();h.prepare_content('application/json');h.write_json(require('luci.model.netscope_setup').l2tp_status())end
+function channels()local h=headers();h.prepare_content('application/json');h.write_json(require('luci.model.netscope_channels').status())end
+function channel_select()locked(function(h)return require('luci.model.netscope_channels').request(h.formvalue('mode'),h.formvalue('id'))end)end
+function channel_import()locked(function(h)return require('luci.model.netscope_channels').import(h.formvalue('payload'),h.formvalue('label'))end)end
 function download()
     local h=headers();if h.getenv('REQUEST_METHOD')~='GET' then h.status(405,'Требуется GET');return end
     local ok,path=pcall(require('luci.model.netscope_setup').download,h.formvalue('draft'),h.formvalue('file'))

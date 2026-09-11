@@ -7,6 +7,10 @@ const setup = path.join(root, 'firmware/packages/luci-app-netscope-setup/files')
 const theme = path.join(root, 'firmware/packages/luci-theme-netscope/files');
 const read = p => fs.readFileSync(p, 'utf8');
 const state = {
+  pool_status:{enabled:true,mode:'manual',active:'demo-helsinki',daemon_alive:true,at:Math.floor(Date.now()/1000),busy:false,events:[],nodes:[
+    {id:'demo-helsinki',label:'Helsinki',kind:'hy2',active:true,ok:true,ms:53,jitter:1.4,loss:0,stale:false},
+    {id:'demo-frankfurt',label:'Frankfurt',kind:'hy2',active:false,ok:true,ms:71,jitter:2.1,loss:0,stale:false},
+    {id:'demo-warsaw',label:'Warsaw',kind:'hy2',active:false,ok:true,ms:62,jitter:1.8,loss:0,stale:false}]},
   status: {storage:{mounted:true,writable:true},tools:{manager:true,wg:true,awg:true,xray:true,mieru:true,hev:true,hysteria:true},lan:'192.168.50.0/24',recommended_port:51820,recommended_tunnel:'10.77.0.0/24'},
   drafts:{drafts:[{id:'demo-hy2-profile',kind:'hy2',protocol:'Hysteria 2',active:true,created:'2026-09-06T10:00:00Z',note:'Изолированный профиль. Голосовой маршрут включается отдельно.'},{id:'demo-mieru-profile',kind:'mieru',protocol:'Mieru',active:false,created:'2026-09-06T10:01:00Z',note:'Пример неактивного профиля для проверки интерфейса.'}]},
   voice_status:{available:true,active:true,healthy:true,upstream_probe:true,mode:'hy2-tun',fallback_ready:true,autostart:false,hy2:true,telegram_nets:8,discord_nets:3,discord_ips:4},
@@ -24,6 +28,12 @@ const server = http.createServer((req,res) => {
       // Exercise all UI paths without ever changing real state.
       let body='';req.on('data',c=>body+=c);req.on('end',()=>{
         const data=new URLSearchParams(body);
+        if(name==='channel_select'){
+          if(['auto','manual'].includes(data.get('mode')))state.pool_status.mode=data.get('mode');
+          const selected=state.pool_status.nodes.find(n=>n.id===data.get('id'));
+          if(selected){state.pool_status.active=selected.id;for(const node of state.pool_status.nodes)node.active=node.id===selected.id;state.pool_status.events.push({at:Math.floor(Date.now()/1000),id:selected.id,ok:true,reason:'manual'});}
+          res.end(JSON.stringify({queued:true}));return;
+        }
         if(name==='prepare')res.end(JSON.stringify({id:'demo-created',state:'DRAFT',note:'Тестовый черновик. Реальная конфигурация не создаётся.',checks:['Проверка выполнена на синтетических данных'],files:[],planned_changes:['Изолированный профиль '+data.get('kind')]}));
         else if(name==='preflight')res.end(JSON.stringify({ready:true,activation_supported:true,checks:['Тестовый runtime готов'],rollback:['Остановить только тестовый профиль'],note:'Локальная имитация проверки'}));
         else res.end(JSON.stringify({note:'Локальная имитация: сеть не менялась.'}));
@@ -31,6 +41,8 @@ const server = http.createServer((req,res) => {
     }
     const result=structuredClone(state[name]||{});
     if(scenario==='empty'&&name==='drafts')result.drafts=[];
+    if(scenario==='empty'&&name==='pool_status'){result.nodes=[];result.active=null;}
+    if(scenario==='off'&&name==='pool_status')result.enabled=false;
     if(scenario==='off'&&name==='voice_status'){result.active=false;result.healthy=false;result.fallback_ready=false;}
     if(scenario==='reserve'&&name==='voice_status')result.mode='mieru-tun';
     if(scenario==='missing'&&name==='status'){result.storage={mounted:false,writable:false};result.tools={manager:true,mieru_installer:true,hev_installer:true,hysteria_installer:true};}
@@ -39,9 +51,9 @@ const server = http.createServer((req,res) => {
   }
   if(url.pathname.startsWith('/luci-static/netscope/')){
     const name=path.basename(url.pathname);
-    const allow=['setup.js','setup.css','import.js','netscope.css','InterVariable.woff2'];
+    const allow=['setup.js','setup.css','channels.js','channels.css','import.js','netscope.css','InterVariable.woff2'];
     if(!allow.includes(name)){res.writeHead(404);res.end();return;}
-    const file=path.join(name.startsWith('setup.')||name==='import.js'?setup:theme,'www/luci-static/netscope',name);
+    const file=path.join(name.startsWith('setup.')||name.startsWith('channels.')||name==='import.js'?setup:theme,'www/luci-static/netscope',name);
     if(!fs.existsSync(file)){res.writeHead(404);res.end();return;}
     res.setHeader('Content-Type',name.endsWith('.css')?'text/css':name.endsWith('.js')?'text/javascript':'font/woff2');res.end(fs.readFileSync(file));return;
   }

@@ -12,8 +12,8 @@ define Package/luci-app-netscope-setup
   SECTION:=luci
   CATEGORY:=LuCI
   SUBMENU:=3. Applications
-  TITLE:=NETSCOPE VPN Quick setup (configuration drafts)
-  DEPENDS:=+luci-base +luci-lib-nixio +luci-lib-jsonc +libuci-lua +wireguard-tools +kmod-wireguard +iptables
+  TITLE:=NETSCOPE VPN Quick Setup and HY2 Channels
+  DEPENDS:=+luci-base +luci-lib-nixio +luci-lib-jsonc +libuci-lua +wireguard-tools +kmod-wireguard +iptables +flock
   PKGARCH:=all
 endef
 
@@ -36,6 +36,8 @@ define Package/luci-app-netscope-setup/install
 	$(INSTALL_DATA) ./files/usr/lib/lua/luci/view/netscope/setup.htm $(1)/usr/lib/lua/luci/view/netscope/
 	$(INSTALL_DATA) ./files/www/luci-static/netscope/setup.js $(1)/www/luci-static/netscope/
 	$(INSTALL_DATA) ./files/www/luci-static/netscope/import.js $(1)/www/luci-static/netscope/
+	$(INSTALL_DATA) ./files/www/luci-static/netscope/channels.js $(1)/www/luci-static/netscope/
+	$(INSTALL_DATA) ./files/www/luci-static/netscope/channels.css $(1)/www/luci-static/netscope/
 	$(INSTALL_DATA) ./files/www/luci-static/netscope/setup.css $(1)/www/luci-static/netscope/
 	$(INSTALL_DIR) $(1)/usr/libexec
 	$(INSTALL_BIN) ./files/usr/libexec/netscope-vpn-profile $(1)/usr/libexec/
@@ -49,9 +51,11 @@ define Package/luci-app-netscope-setup/install
 	$(INSTALL_BIN) ./files/usr/libexec/netscope-mieru-tun $(1)/usr/libexec/
 	$(INSTALL_BIN) ./files/usr/libexec/netscope-voice-monitor $(1)/usr/libexec/
 	$(INSTALL_BIN) ./files/usr/libexec/netscope-voice-boot $(1)/usr/libexec/
+	$(INSTALL_BIN) ./files/usr/libexec/netscope-channels $(1)/usr/libexec/
 	$(INSTALL_BIN) ./files/usr/libexec/netscope-l2tp-watchdog $(1)/usr/libexec/
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) ./files/etc/init.d/netscope-voice $(1)/etc/init.d/
+	$(INSTALL_BIN) ./files/etc/init.d/netscope-channels $(1)/etc/init.d/
 	$(INSTALL_BIN) ./files/etc/init.d/netscope-l2tp-watchdog $(1)/etc/init.d/
 endef
 

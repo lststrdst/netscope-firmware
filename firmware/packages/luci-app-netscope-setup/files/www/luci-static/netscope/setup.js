@@ -83,7 +83,7 @@
   el('voice-status').textContent=!v.available?'Не настроен':v.active?(v.healthy?'● Маршрут включён':'Восстанавливаем соединение…'):'Маршрут выключен';
   el('voice-status').dataset.state=v.active&&v.healthy?'ok':v.active?'warning':'idle';
   el('voice-channel').textContent=!v.available?'Модуль не установлен':!v.active?'Маршрут выключен':v.mode==='mieru-tun'?'Mieru → резервный канал':'HY2 → основной канал';
-  el('voice-reserve').textContent=v.fallback_ready?'Mieru · резерв готов':'Mieru · резерв не готов';
+  el('voice-reserve').textContent=v.fallback_ready?'Mieru · резерв готов':'Mieru выключен · HY2-резервы в списке серверов выше';
   el('voice-start').hidden=!!v.active;el('voice-stop').hidden=!v.active;
   return v;}
  async function loadVoiceTelemetry(){const v=await api('voice_telemetry');metric('latency',v.available?v.latency_ms:null);metric('jitter',v.available?v.jitter_ms:null);metric('loss',v.available?v.loss_percent:null);const endpoint=v.endpoint?`${v.endpoint.device||v.endpoint.client} → ${v.endpoint.destination}:${v.endpoint.port} (${v.endpoint.service})`:'активного голосового endpoint нет';el('voice-health').textContent=!v.available?'Модуль телеметрии не установлен':`Контрольный UDP: ${v.latency_ms??'—'} мс · jitter ${v.jitter_ms??'—'} мс · потери проб ${v.loss_percent??'—'}% · ${endpoint}. Окно: ${v.window||0} проб.`;}

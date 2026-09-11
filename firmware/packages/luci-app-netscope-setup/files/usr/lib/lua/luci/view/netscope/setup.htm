@@ -1,8 +1,15 @@
 <%+header%>
 <link rel="stylesheet" href="/luci-static/netscope/setup.css?v=17">
+<link rel="stylesheet" href="/luci-static/netscope/channels.css?v=2">
 <section id="netscope-setup" data-api="<%=url('admin','services','netscope_setup')%>" data-token="<%=token%>">
-<nav class="nsq-nav" aria-label="Разделы быстрой настройки"><a href="#ns-setup-form">Новый профиль</a><a href="#ns-setup-profiles">Мои подключения</a><a href="#ns-setup-components">Компоненты</a></nav>
+<nav class="nsq-nav" aria-label="Разделы быстрой настройки"><a href="#ns-channels">Серверы и каналы</a><a href="#ns-setup-form">Новый профиль</a><a href="#ns-setup-profiles">Мои подключения</a><a href="#ns-setup-components">Компоненты</a></nav>
 <div class="nsq-heading"><p class="nsq-eyebrow">СЕТЬ / VPN QUICK SETUP</p><h2>Быстрая настройка VPN</h2><p>Создайте профиль. Проверьте настройки. Подключите, когда будете готовы.</p></div>
+<section id="ns-channels" aria-label="Серверы и переключение канала">
+<div class="ns-ch-top"><div><p class="nsq-eyebrow">СЕРВЕРЫ / ГОЛОСОВОЙ UDP</p><h3>Ваши каналы связи</h3><p class="ns-ch-muted">HY2-серверы из подписки. Автоматически или под вашим контролем.</p></div><div><strong id="ns-ch-active">Загрузка…</strong><span id="ns-ch-health" class="ns-ch-muted"></span></div></div>
+<div class="ns-ch-bar"><div class="ns-ch-segment" role="group" aria-label="Режим выбора сервера"><button id="ns-ch-auto" type="button" aria-pressed="false">Авто</button><button id="ns-ch-manual" type="button" aria-pressed="false">Вручную</button></div><span id="ns-ch-mode" class="ns-ch-muted"></span><button id="ns-ch-check" type="button">Проверить серверы</button></div>
+<div class="ns-ch-grid"><div><div class="ns-ch-top"><strong id="ns-ch-count">—</strong><span id="ns-ch-updated" class="ns-ch-muted"></span></div><div id="ns-ch-nodes"></div><p class="ns-ch-muted">Задержка и потери измеряются контрольными UDP-пробами, а не голосом. При смене HY2 текущий звонок может переподключиться.</p><details><summary>История переключений</summary><ul id="ns-ch-history"></ul></details></div>
+<aside class="ns-ch-import"><strong>Добавить подписку</strong><form id="ns-ch-import-form"><label for="ns-ch-source" class="ns-ch-muted">HTTPS-подписка, ссылка Happ или HY2</label><input id="ns-ch-source" type="password" autocomplete="off" maxlength="65535" placeholder="Вставьте приватную ссылку" required><button type="submit" class="primary">Добавить серверы</button></form><p class="ns-ch-muted">В группу звонков добавятся HY2-узлы. Другие протоколы будут показаны в составе подписки. Ключи не отображаются и не публикуются.</p><details><summary>Что найдено в подписке</summary><ul id="ns-ch-import-preview"></ul></details><details><summary>Как работает авто</summary><p class="ns-ch-muted">Две неудачные проверки — переход на проверенный резерв. Устойчиво высокая задержка — переход только при заметном улучшении, с паузой между переключениями. При общем сбое сохраняется fail-open голосового маршрута. Офис, игры и обычный интернет не перенастраиваются.</p></details></aside></div>
+<p id="ns-ch-message" role="status" aria-live="polite"></p></section>
 <div class="nsq-scenarios" role="group" aria-label="Что хотите настроить">
 <button type="button" data-scenario="home" aria-pressed="true"><strong>Доступ домой</strong><span>Подключайтесь к своей локальной сети извне</span></button>
 <button type="button" data-scenario="vpn" aria-pressed="false"><strong>Подключение к VPN</strong><span>Добавьте готовый профиль своего сервера</span></button>
@@ -59,7 +66,7 @@
 <div class="nsq-metrics" aria-label="Контрольные UDP-пробы"><div><strong id="ns-setup-latency">—</strong><span>Задержка, мс</span></div><div><strong id="ns-setup-jitter">—</strong><span>Джиттер, мс</span></div><div><strong id="ns-setup-loss">—</strong><span>Потери, %</span></div></div>
 <p class="nsq-caption">Контрольные UDP-пробы, не задержка текущего звонка.</p>
 <div id="ns-setup-voice-actions" class="ns-setup-button-row nsq-voice-actions"><button class="cbi-button cbi-button-apply" id="ns-setup-voice-start" type="button" disabled>Включить голосовой маршрут</button><button class="cbi-button cbi-button-reset" id="ns-setup-voice-stop" type="button" disabled hidden>Выключить голосовой маршрут</button><button class="cbi-button cbi-button-action" id="ns-setup-voice-autostart" type="button" disabled>Включить автозапуск</button></div>
-<details class="nsq-details"><summary>Адреса и параметры маршрута</summary><p>Только целевой UDP Telegram и Discord идёт через HY2, активный Mieru UDP используется как резерв. После двух сбоев HY2 маршрут переключается на Mieru и возвращается после восстановления. Если оба канала недоступны, правило снимается (fail-open). Steam, Dota, остальной UDP, default route и L2TP не меняются.</p>
+<details class="nsq-details"><summary>Адреса и параметры маршрута</summary><p>Только целевой UDP Telegram и Discord идёт через HY2. Группа HY2-серверов и автоматическое переключение настраиваются выше. Mieru используется только если явно включён и добавлен в автозапуск; при отключённом Mieru он не запускается. Если рабочий канал недоступен, правило снимается (fail-open). Steam, Dota, остальной UDP, default route и L2TP не меняются.</p>
 <button class="cbi-button cbi-button-action" id="ns-setup-voice-update" type="button">Обновить адреса Telegram</button>
 <p id="ns-setup-voice-note" class="nsq-caption">Для стабильной маршрутизации Telegram отключите P2P звонков: Настройки → Конфиденциальность → Звонки → Peer-to-Peer → Никто.</p><p id="ns-setup-voice-detail-status" class="nsq-caption"></p><p id="ns-setup-voice-health" class="nsq-caption">Телеметрия ещё не собрана.</p></details>
 </section>
@@ -71,5 +78,6 @@
 <p class="nsq-footer"><% if require('nixio.fs').access('/usr/lib/lua/luci/controller/netscope.lua') then %><a href="<%=url('admin','status','netscope')%>">NETSCOPE · сертификаты и трафик</a><% end %><a href="https://github.com/lststrdst/netscope-firmware" target="_blank" rel="noopener noreferrer">Проект и инструкция по установке ↗</a></p>
 </section>
 <script defer src="/luci-static/netscope/import.js?v=17"></script>
-<script defer src="/luci-static/netscope/setup.js?v=17"></script>
+<script defer src="/luci-static/netscope/setup.js?v=18"></script>
+<script defer src="/luci-static/netscope/channels.js?v=2"></script>
 <%+footer%>
